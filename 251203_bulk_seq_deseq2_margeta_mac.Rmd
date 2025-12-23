@@ -13,6 +13,10 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 
 #BiocManager::install("biomaRt")
 #BiocManager::install("org.Mm.eg.db")
+#BiocManager::install("GenomicFeatures")
+#BiocManager::install("txdbmaker")
+#BiocManager::install("tximport")
+#BiocManager::install("rhdf5")
 # Load required packages
 library(dplyr)
 library(stringr)
@@ -23,173 +27,142 @@ library(DESeq2)
 library(AnnotationDbi)
 library(org.Mm.eg.db)
 ```
-Import
+#Create transcript db for importing the kallisto output. Maps ENSMBL transcript IDs to Gene IDs
 ```{r}
-#BiocManager::install("GenomicFeatures")
-#BiocManager::install("txdbmaker")
 library("GenomicFeatures")
-txdb <- makeTxDbFromGFF("/data_pool/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf")
 
-k <- keys(txdb, keytype = "TXNAME")
-
-tx2gene <- select(txdb, keys = k,
+createTxDB <- function(gtf, output_file){
+  txdb <- makeTxDbFromGFF(gtf)
+  k <- keys(txdb, keytype = "TXNAME")  
+  tx2gene <- select(txdb, keys = k,
                   columns = c("GENEID"),
                   keytype = "TXNAME")
-# Remove version numbers from transcript IDs
-tx2gene[,1] <- sub("\\..*$", "", tx2gene[,1])
+  # Remove version numbers from transcript IDs
+  tx2gene[,1] <- sub("\\..*$", "", tx2gene[,1])
+  write.table(tx2gene,
+            file = output_file,
+             quote = FALSE,
+             sep = "\t",
+             row.names = FALSE,
+             col.names = FALSE)
+  return(tx2gene)
+  }
 
-#write.table(tx2gene,
-#            file = "tx2gene.tsv",
-#            quote = FALSE,
-#            sep = "\t",
-#            row.names = FALSE,
-#            col.names = FALSE)
+output_txdb = "/data_pool/raw_data/reference_genomes/mouse/ensembl/tx2gene.tsv"
+if (!file.exists(output_txdb)) {
+  tx2gene = createTxDB(gtf = "/data_pool/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf",
+           output_file = output_txdb)
+}
+
+tx2gene <- read_tsv(output_txdb)
 ```
-
+#Import counts from kallisto mapping.
 ```{r}
-#BiocManager::install("tximport")
-#BiocManager::install("rhdf5")
 library(tximport)
 # Read your table
-samples <- read.table("/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/samples.txt", header = TRUE, sep = ",")
 
-# Build named vector of kallisto abundance files
-files <- setNames(samples$path, samples$sample)
-#tx2gene <- read.table("tx2gene.tsv", header = TRUE, sep = "\t")
-# Import kallisto results
-txi <- tximport(
-    files,
-    type = "kallisto",
-    tx2gene = tx2gene,
-    countsFromAbundance = "no",
-    ignoreTxVersion = TRUE
-)
+import_kallisto <- function(sample_path){
+  samples <- read.table(sample_path, header = TRUE, sep = ",")
+  
+  # Build named vector of kallisto abundance files
+  files <- setNames(samples$path, samples$sample)
+  
+  # Import kallisto results
+  txi <- tximport(
+      files,
+      type = "kallisto",
+      tx2gene = tx2gene,
+      countsFromAbundance = "no",
+      ignoreTxVersion = TRUE
+  )
+  
+  # Build DESeq2 metadata
+  metadata <- samples[, c("condition", "replicate")]
+  rownames(metadata) <- samples$sample
+  
+  # Build DESeq2 dataset
+  dds <- DESeqDataSetFromTximport(
+      txi,
+      colData = metadata,
+      design = ~ condition
+  )
+  return(dds)
+}
 
-# Build DESeq2 metadata
-metadata <- samples[, c("condition", "replicate")]
-rownames(metadata) <- samples$sample
+#Run DeSeq2
+process_deseq<-function(d){
+  # Extract results
+  res <- results(d)
+  
+  # Order by adjusted p-value
+  res <- res[order(res$padj), ]
+  res$symbol <- mapIds(
+      org.Mm.eg.db,
+      keys = rownames(res),
+      column = "SYMBOL",
+      keytype = "ENSEMBL",
+      multiVals = "first"
+  )
+  return(res) 
+}
 
-# Build DESeq2 dataset
-dds <- DESeqDataSetFromTximport(
-    txi,
-    colData = metadata,
-    design = ~ condition
-)
-```
-DESEQ
-```{r}
-
+dds <- import_kallisto(sample_path = "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/samples.txt")
 # Run DESeq2 differential expression
 dds <- DESeq(dds)
+res <- process_deseq(dds)
 
-# Extract results
-res <- results(dds)
-
-# Order by adjusted p-value
-res <- res[order(res$padj), ]
-res$symbol <- mapIds(
-    org.Mm.eg.db,
-    keys = rownames(res),
-    column = "SYMBOL",
-    keytype = "ENSEMBL",
-    multiVals = "first"
-)
 test=as.data.frame(res)
 # Save full results
 #write.csv(as.data.frame(res), file = "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/deseq2_results.csv")
-```
-
-Variance stablization (good fpr PCA/cluster/QC/distance matrices/ML that assumes homoskedastic data, not differential expression testing)
-```{r}
-# Optional: variance stabilized data
-vsd <- vst(dds)
-test2=assay(vsd)
-write.csv(assay(vsd), file = "normalized_vst_counts.csv")
-```
-
-Volcano plot
-```{r}
-# Load packages
-library(ggplot2)
-
-# Assume 'res' is your DESeq2 results object:
-# res <- results(dds)
-
-# Convert to data frame
-res_df <- as.data.frame(res)
-
-# Add a column to indicate significance
-res_df$significant <- with(
-  res_df,
-  ifelse(padj < 0.05 & abs(log2FoldChange) > 1, "Significant", "Not Significant")
-)
-
-
-# Genes to label
-label_genes <- c("Trem2", "Gpmnb", "Cstb", "Spp1", "Lgals3", "Apoe")
-
-# Add label column
-res_df$label <- ifelse(res_df$symbol %in% label_genes, res_df$symbol, NA)
-
-# Volcano plot
-ggplot(res_df, aes(x = log2FoldChange,
-                   y = -log10(padj),
-                   color = significant)) +
-  geom_point(alpha = 0.6, size = 1.5) +
-  geom_text(
-    aes(label = label),
-    color = "black",  
-    check_overlap = TRUE,
-    vjust = -0.5,
-    size = 3
-  ) +
-  scale_color_manual(values = c("gray", "red")) +
-  theme_minimal() +
-  theme(
-    panel.grid = element_blank()  # Removes all gridlines
-  ) +
-  labs(
-    title = "Volcano Plot",
-    x = "log2 Fold Change",
-    y = "-log10 Adjusted p-value"
-  )
-
 ```
 ```{r, fig.width = 10, fig.height = 15}
 #BiocManager::install("EnhancedVolcano")
 library(EnhancedVolcano)
 
-# If DESeq2 results are in `res`:
-# Make sure gene names are rownames
-res_df <- as.data.frame(res)
-res_df$gene <- rownames(res_df)
-res_df <-  res_df %>% filter(!is.na(symbol))
+make_enhanced_volcano <- function(res,output_path){
 
-# Genes to label
-label_genes <- c("Csta3","Trem2", "Gpnmb", "Cstb", "Spp1", "Lgals3", "Apoe")
+  # Make gene names rownames
+  res_df <- as.data.frame(res)
+  res_df$gene <- rownames(res_df)
+  res_df <-  res_df %>% filter(!is.na(symbol))
+  
+  # Genes to label
+  label_genes <- c("Csta3","Trem2", "Gpnmb", "Cstb", "Spp1", "Lgals3", "Apoe")
 
-p<-EnhancedVolcano(
-  res_df,
-  lab = res_df$symbol,
-  x = "log2FoldChange",
-  y = "padj",
-  selectLab = label_genes,     # only label these genes【2】
-  labCol = "black",            # label color
-  pCutoff = 0.05,
-  FCcutoff = 1,
-  pointSize= 0.5,
-  labSize=6.0,
-  colConnectors = "black",
-  gridlines.major = FALSE,   # 【1】
-  gridlines.minor = FALSE,
-  col=c('gray', 'gray', 'gray', 'red3'),
-  colAlpha = 1, 
-  drawConnectors = TRUE,
-  widthConnectors = 0.75
-) + scale_y_continuous(breaks = seq(0, 10, 2))
-p
-#ggsave("/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/251204_phag_v_no_phag_volcano.png", p, width = 10, height = 15, dpi = 300)
+  p<-EnhancedVolcano(
+    res_df,
+    lab = res_df$symbol,
+    x = "log2FoldChange",
+    y = "padj",
+    ylim = c(0,-log10(10e-5)),
+    xlim = c(-12,12),
+    selectLab = label_genes,     # only label these genes【2】
+    labCol = "black",            # label color
+    pCutoff = 0.05,
+    FCcutoff = 1,
+    pointSize= 0.5,
+    labSize=6.0,
+    colConnectors = "black",
+    gridlines.major = FALSE,   # 【1】
+    gridlines.minor = FALSE,
+    col=c('gray', 'gray', 'gray', 'red3'),
+    colAlpha = 1, 
+    drawConnectors = TRUE,
+    widthConnectors = 0.75
+  ) #+ scale_y_continuous(breaks = seq(0, 10, 2))
+
+  
+  if (!missing(output_path)){
+    ggsave(output_path, p, width = 10, height = 15, dpi = 300)}
+  return(p)
+  
+}
+
+make_enhanced_volcano(res,
+                  output_path="/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/251204_phag_v_no_phag_volcano.png")
+#
 ```
+
 
 ```{r, fig.width=3, fig.height=6}
 library(pheatmap)
@@ -241,10 +214,189 @@ pheatmap(
 dev.off()
 ```
 
+```{r fig.width=4, fig.height=18}
+top_genes_heatmap <- function(res, dds, n=25){
+
+  # 1. Select top n up and n down
+  res_ordered <- res[order(res$log2FoldChange, decreasing = TRUE), ]
+  #res_ordered <- res[order(res$padj, decreasing = FALSE), ] #alternatively sort on padj
+  top_up <- head(res_ordered, n)
+  top_down <- tail(res_ordered, n)
+  top_genes <- c(rownames(top_up), rownames(top_down))
+  #top_genes <- rownames(head(res_ordered,n*2)) #alternatively take the top genes regardless of up or down
+
+  # 2. VST transform
+  vst_mat <- assay(vst(dds))[top_genes, ]
+  rownames(vst_mat) <- mapIds(
+      org.Mm.eg.db,
+      keys = rownames(vst_mat),
+      column = "SYMBOL",
+      keytype = "ENSEMBL",
+      multiVals = "first"
+  )
+  # 3. Build row labels (label only selected genes)
+  row_labels <- ifelse(rownames(vst_mat) %in% genes,
+                       rownames(vst_mat),
+                       "")
+  
+  dds_sub <- assay(dds[top_genes, ])
+
+  rownames(dds_sub) <- mapIds(
+      org.Mm.eg.db,
+      keys = rownames(dds_sub),
+      column = "SYMBOL",
+      keytype = "ENSEMBL",
+      multiVals = "first"
+  )
+  dds_sub <- log2(dds_sub + 1)
+  
+  # scale by row so each gene shows relative expression
+  dds_sub <- t(scale(t(dds_sub)))
+  
+  # 4. pheatmap
+  p<-pheatmap(
+    dds_sub,
+    cluster_rows = FALSE,
+    cluster_cols = TRUE,
+    show_rownames = TRUE,
+    fontsize = 10,
+    fontsize_row = 12,
+    fontsize_col = 12,
+    border_color = NA,
+    ##cellwidth = 15,
+    #cellheight = 10
+  )
+  return(p)
+}
+
+# dds: your DESeqDataSet
+# res: DESeq2 results
+# genes: vector of genes you want labeled
+# 0. Remove entries with NA log2FoldChange, no gene symbol or gene symbols that begin with Gm 
+res_filt <- res[!(is.na(res$log2FoldChange)), ]
+p <- top_genes_heatmap(res_filt,dds,25)
+res_filt <- res[!(is.na(res$log2FoldChange))&!(is.na(res$symbol)), ]
+p <- top_genes_heatmap(res_filt,dds,25)
+res_filt <- res[!(is.na(res$log2FoldChange))&!(is.na(res$symbol))&!grepl("^Gm", res$symbol), ]
+p <- top_genes_heatmap(res_filt,dds,25)
+
+```
+```{r}
+symbols <- mapIds(
+  org.Mm.eg.db,
+  keys = rownames(dds),
+  keytype = "ENSEMBL",
+  column = "SYMBOL",
+  multiVals = "first"
+)
+
+rowData(dds)$symbol <- symbols
+
+plot_pca <- function(dds){
+  # dds: your DESeqDataSet
+  # "condition" is an example column in colData(dds); replace with yours
+  
+  # 1. VST transform
+  vsd <- vst(dds)
+  
+  # 2. Extract PCA data (built-in helper)
+  pca_data <- plotPCA(vsd, intgroup = "condition", returnData = TRUE)
+  
+  # Percent variance
+  percent_var <- round(100 * attr(pca_data, "percentVar"))
+  
+  # 3. Pretty PCA with point labels
+  ggplot(pca_data, aes(PC1, PC2, color = condition, label = name)) +
+    geom_point(size = 4, alpha = 0.8) +
+    geom_text_repel(size = 3.5, max.overlaps = Inf) +
+    #geom_text(vjust = -0.7, size = 3.5) +
+    expand_limits(
+      x = c(min(pca_data$PC1) - 5, max(pca_data$PC1) + 5),
+      y = c(min(pca_data$PC2) - 5, max(pca_data$PC2) + 5)
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      panel.grid = element_blank(),
+      legend.position = "right"
+    ) +
+    xlab(paste0("PC1: ", percent_var[1], "% variance")) +
+    ylab(paste0("PC2: ", percent_var[2], "% variance"))
+}
+plot_pca(dds)
+dds_filt <- dds[!is.na(rowData(dds)$symbol) &!grepl("^Gm", rowData(dds)$symbol),
+]
+plot_pca(dds_filt)
+```
+
+
 ```{r}
 ?renv::paths
 renv::snapshot()
 ```
+
+
+#####EXTRA#######
+
+Volcano plot
+```{r}
+# Load packages
+library(ggplot2)
+
+make_volcano_plot <- function(){
+  
+}
+# Assume 'res' is your DESeq2 results object:
+# res <- results(dds)
+
+# Convert to data frame
+res_df <- as.data.frame(res)
+
+# Add a column to indicate significance
+res_df$significant <- with(
+  res_df,
+  ifelse(padj < 0.05 & abs(log2FoldChange) > 1, "Significant", "Not Significant")
+)
+
+
+# Genes to label
+label_genes <- c("Trem2", "Gpmnb", "Cstb", "Spp1", "Lgals3", "Apoe")
+
+# Add label column
+res_df$label <- ifelse(res_df$symbol %in% label_genes, res_df$symbol, NA)
+
+# Volcano plot
+ggplot(res_df, aes(x = log2FoldChange,
+                   y = -log10(padj),
+                   color = significant)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  geom_text(
+    aes(label = label),
+    color = "black",  
+    check_overlap = TRUE,
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_color_manual(values = c("gray", "red")) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank()  # Removes all gridlines
+  ) +
+  labs(
+    title = "Volcano Plot",
+    x = "log2 Fold Change",
+    y = "-log10 Adjusted p-value"
+  )
+
+```
+
+Variance stablization (good fpr PCA/cluster/QC/distance matrices/ML that assumes homoskedastic data, not differential expression testing)
+```{r}
+# Optional: variance stabilized data
+vsd <- vst(dds)
+test2=assay(vsd)
+write.csv(assay(vsd), file = "normalized_vst_counts.csv")
+```
+
 
 
 ```{r}
