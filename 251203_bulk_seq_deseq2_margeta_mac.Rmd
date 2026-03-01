@@ -17,23 +17,44 @@ A universal, modular pipeline for DESeq2 analysis with volcano plots, heatmaps, 
 ## 1. Setup & Configuration
 
 ```{r setup, message=FALSE, warning=FALSE}
-# Install BiocManager if needed
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
+
+
+# Activate renv for this project (creates renv structure if needed)
+# Renv will manage package versions and dependencies for reproducibility
 library(renv)
-# Load all required packages
+renv::activate()
+
+# Restore packages from lockfile (pulls from cache if available)
+if (file.exists("renv.lock")) {
+  renv::restore(prompt = FALSE)
+}
 packages <- c(
-  "dplyr", "stringr", "readr", "rhdf5", "ggplot2", "ggrepel",
-  "DESeq2", "tximport", "AnnotationDbi", "org.Mm.eg.db",
-  "GenomicFeatures", "pheatmap", "EnhancedVolcano"
+  # CRAN
+  "dplyr", "stringr", "readr", "ggplot2", "ggrepel",
+  "pheatmap", "systemfonts", "AsioHeaders", "httpgd",
+  # Bioconductor
+  "rhdf5", "DESeq2", "tximport", "AnnotationDbi",
+  "org.Mm.eg.db", "GenomicFeatures", "EnhancedVolcano"
 )
 
-for (pkg in packages) {
-  if (!require(pkg, character.only = TRUE)) {
-    BiocManager::install(pkg)
-    library(pkg, character.only = TRUE)
-  }
+#Install any missing packages
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) {
+  renv::install(packages[!installed], prompt = FALSE)
 }
+
+#Install httpgd for remote figure generation for VSCode if using
+if (!"httpgd" %in% rownames(installed.packages())) {
+  renv::install("httpgd", repos = "https://community.r-multiverse.org")
+}
+
+# Load all packages
+invisible(lapply(c(packages, "httpgd"), function(pkg) {
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+}))
+
+#Save the state of the environment (creates renv.lock)
+renv::snapshot(prompt = FALSE)
 
 knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
@@ -427,4 +448,8 @@ p_pca_filt
 
 # Also save
 ggsave(file.path(OUTPUT_DIR, "pca_plot.pdf"), p_pca_filt, width = 8, height = 6)
+```
+
+```
+renv::snapshot()
 ```
