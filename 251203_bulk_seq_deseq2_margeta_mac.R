@@ -11,17 +11,16 @@ Try executing this chunk by clicking the *Run* button within the chunk or by pla
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 
-#BiocManager::install("biomaRt")
+BiocManager::install("biomaRt")
 
 library(biomaRt)
-
 ```
 
 ```{r}
 ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
 abundance <- read_tsv("/output/kallisto_results/mouse_ensbl/B6Cont1NonPhag/abundance.tsv")
 
-tx_ids = str_remove(abundance$target_id, "\\.\\d+$")
+tx_ids <- str_remove(abundance$target_id, "\\.\\d+$")
 
 mapping <- getBM(
     attributes = c("ensembl_transcript_id", "ensembl_gene_id", "external_gene_name"),
@@ -31,7 +30,7 @@ mapping <- getBM(
 )
 
 mapping
-abundance$gene_name = mapping
+abundance$gene_name <- mapping
 abundance$target_id_trimmed = tx_ids
 ```
 
@@ -60,7 +59,7 @@ rRNA_gtf <- gtf %>%
          str_detect(X9, 'transcript_biotype "rRNA"'))
 
 # Extract transcript_id values
-rRNA_ids <- str_match(rRNA_gtf$X9, 'transcript_id "([^"]+)"')[,2] 
+rRNA_ids <- str_match(rRNA_gtf$X9, 'transcript_id "([^"]+)"')[, 2]
 
 # ---- 4. Filter Kallisto output for rRNA transcripts ----
 rRNA_abundance <- abundance %>%

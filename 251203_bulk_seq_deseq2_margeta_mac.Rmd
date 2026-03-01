@@ -1,260 +1,359 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "DESeq2 Analysis Pipeline"
+author: "Bulk RNA-seq"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    code_folding: hide
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+# DESeq2 Differential Expression Analysis Pipeline
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+A universal, modular pipeline for DESeq2 analysis with volcano plots, heatmaps, and PCA.
 
-```{r}
+## 1. Setup & Configuration
+
+```{r setup, message=FALSE, warning=FALSE}
+# Install BiocManager if needed
 if (!requireNamespace("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-
-#BiocManager::install("biomaRt")
-#BiocManager::install("org.Mm.eg.db")
-#BiocManager::install("GenomicFeatures")
-#BiocManager::install("txdbmaker")
-#BiocManager::install("tximport")
-#BiocManager::install("rhdf5")
-# Load required packages
-library(dplyr)
-library(stringr)
-library(biomaRt)
+  install.packages("BiocManager")
 library(renv)
-library(readr)
-library(DESeq2)
-library(AnnotationDbi)
-library(org.Mm.eg.db)
-```
-#Create transcript db for importing the kallisto output. Maps ENSMBL transcript IDs to Gene IDs
-```{r}
-library("GenomicFeatures")
+# Load all required packages
+packages <- c(
+  "dplyr", "stringr", "readr", "rhdf5", "ggplot2", "ggrepel",
+  "DESeq2", "tximport", "AnnotationDbi", "org.Mm.eg.db",
+  "GenomicFeatures", "pheatmap", "EnhancedVolcano"
+)
 
-createTxDB <- function(gtf, output_file){
-  txdb <- makeTxDbFromGFF(gtf)
-  k <- keys(txdb, keytype = "TXNAME")  
+for (pkg in packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    BiocManager::install(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+## Configuration: User Inputs
+
+```{r config}
+# ===== EDIT THESE PARAMETERS =====
+# Paths
+SAMPLE_PATH <- "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/samples.txt"
+GTF_PATH <- "/data_pool/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf"
+TX2GENE_PATH <- "/data_pool/raw_data/reference_genomes/mouse/ensembl/tx2gene.tsv"
+OUTPUT_DIR <- "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/results"
+
+# Annotation
+ORGANISM <- org.Mm.eg.db
+ORGANISM_NAME <- "Mus musculus"
+
+# Gene filtering (remove NA gene symbols and patterns like "Gm...")
+FILTER_NA_SYMBOL <- TRUE
+FILTER_PATTERN <- "^Gm"  # Set to "" to skip pattern filtering
+
+# Volcano plot configuration
+LABEL_GENES <- c("Csta3", "Trem2", "Gpnmb", "Cstb", "Spp1", "Lgals3", "Apoe", "Lgals1")
+VOLCANO_PADJ <- 0.05
+VOLCANO_LFC <- 1
+
+# Heatmap configuration - genes to highlight
+HEATMAP_PATH_GENES <- c(
+  "Csta3", "Trem2", "Gpnmb", "Cstb", "Spp1", "Lgals3", "Apoe", "Lgals1",
+  "C1qb", "C1qc", "Ctsd", "Ctsa", "Hexa", "Ifi27", "Ifi35", "Siglecg",
+  "CD74", "H2-Aa"
+)
+
+# Top genes heatmap (show top N up- and down-regulated)
+TOP_GENES_N <- 25
+
+# ===== END OF USER EDITS =====
+dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
+```
+## 2. Load Tx2Gene (Transcript to Gene) Mapping
+
+```{r tx2gene}
+# Create or load tx2gene mapping (ENSMBL transcript ID → gene ID)
+create_tx2gene <- function(gtf_path, output_path) {
+  message("Creating tx2gene mapping from GTF...")
+  txdb <- makeTxDbFromGFF(gtf_path)
+  k <- keys(txdb, keytype = "TXNAME")
   tx2gene <- select(txdb, keys = k,
-                  columns = c("GENEID"),
-                  keytype = "TXNAME")
+                    columns = "GENEID",
+                    keytype = "TXNAME")
   # Remove version numbers from transcript IDs
-  tx2gene[,1] <- sub("\\..*$", "", tx2gene[,1])
+  tx2gene[, 1] <- sub("\\..*$", "", tx2gene[, 1])
   write.table(tx2gene,
-            file = output_file,
-             quote = FALSE,
-             sep = "\t",
-             row.names = FALSE,
-             col.names = FALSE)
+              file = output_path,
+              quote = FALSE,
+              sep = "\t",
+              row.names = FALSE,
+              col.names = FALSE)
   return(tx2gene)
+}
+
+if (!file.exists(TX2GENE_PATH)) {
+  message(sprintf("Creating tx2gene at: %s", TX2GENE_PATH))
+  tx2gene <- create_tx2gene(GTF_PATH, TX2GENE_PATH)
+} else {
+  message(sprintf("Loading tx2gene from: %s", TX2GENE_PATH))
+  tx2gene <- read_tsv(TX2GENE_PATH, col_names = c("TXNAME", "GENEID"))
+}
+
+head(tx2gene)
+```
+## 3. Import Kallisto Results & Create DESeq2 Object
+
+```{r deseq_import}
+# Import kallisto counts via tximport
+import_kallisto <- function(sample_path, tx2gene) {
+  message("Reading sample metadata from:", sample_path)
+  samples <- read.table(sample_path, header = TRUE, sep = ",")
+
+  if (!all(c("sample", "path", "condition") %in% colnames(samples))) {
+    stop("Sample file must have columns: sample, path, condition")
   }
 
-output_txdb = "/data_pool/raw_data/reference_genomes/mouse/ensembl/tx2gene.tsv"
-if (!file.exists(output_txdb)) {
-  tx2gene = createTxDB(gtf = "/data_pool/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf",
-           output_file = output_txdb)
-}
-
-tx2gene <- read_tsv(output_txdb)
-```
-#Import counts from kallisto mapping.
-```{r}
-library(tximport)
-# Read your table
-
-import_kallisto <- function(sample_path){
-  samples <- read.table(sample_path, header = TRUE, sep = ",")
-  
+  message("Importing kallisto results from", nrow(samples), "samples...")
   # Build named vector of kallisto abundance files
   files <- setNames(samples$path, samples$sample)
-  
+
+  # Check that files exist
+  missing <- !file.exists(files)
+  if (any(missing)) {
+    stop("Missing files:\n", paste(names(files)[missing], collapse = "\n"))
+  }
+
   # Import kallisto results
   txi <- tximport(
-      files,
-      type = "kallisto",
-      tx2gene = tx2gene,
-      countsFromAbundance = "no",
-      ignoreTxVersion = TRUE
+    files,
+    type = "kallisto",
+    tx2gene = tx2gene,
+    countsFromAbundance = "no",
+    ignoreTxVersion = TRUE
   )
-  
-  # Build DESeq2 metadata
-  metadata <- samples[, c("condition", "replicate")]
-  rownames(metadata) <- samples$sample
-  
-  # Build DESeq2 dataset
-  dds <- DESeqDataSetFromTximport(
-      txi,
-      colData = metadata,
-      design = ~ condition
+
+  # Build colData (metadata)
+  coldata <- as.data.frame(samples[, c("condition", "replicate", "sample"),
+                                   drop = FALSE])
+  rownames(coldata) <- samples$sample
+
+  # Remove duplicate columns
+  coldata <- coldata[, !duplicated(colnames(coldata))]
+
+  # Build DESeqDataSet
+  message("Creating DESeqDataSet...")
+  dds <- DESeq2::DESeqDataSetFromTximport(
+    txi,
+    colData = coldata,
+    design = ~ condition
   )
-  return(dds)
+
+  dds
 }
 
-#Run DeSeq2
-process_deseq<-function(d){
-  # Extract results
-  res <- results(d)
-  
-  # Order by adjusted p-value
-  res <- res[order(res$padj), ]
-  res$symbol <- mapIds(
-      org.Mm.eg.db,
-      keys = rownames(res),
-      column = "SYMBOL",
-      keytype = "ENSEMBL",
-      multiVals = "first"
-  )
-  return(res) 
-}
-
-dds <- import_kallisto(sample_path = "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/samples.txt")
-# Run DESeq2 differential expression
-dds <- DESeq(dds)
-res <- process_deseq(dds)
-
-test=as.data.frame(res)
-# Save full results
-#write.csv(as.data.frame(res), file = "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/deseq2_results.csv")
+# Import data
+dds <- import_kallisto(SAMPLE_PATH, tx2gene)
+message("DESeqDataSet created: ", nrow(dds), " genes x ", ncol(dds), " samples")
 ```
-```{r, fig.width = 10, fig.height = 15}
-#BiocManager::install("EnhancedVolcano")
-library(EnhancedVolcano)
+## 4. Run Differential Expression Analysis
 
-make_enhanced_volcano <- function(res,output_path){
+```{r deseq_analysis}
+# Run DESeq2
+message("Running DESeq2...")
+dds <- DESeq(dds)
 
-  # Make gene names rownames
+# Extract and annotate results
+res <- results(dds)
+res <- res[order(res$padj), ]
+
+# Add gene symbols
+res$symbol <- mapIds(
+  ORGANISM,
+  keys = rownames(res),
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
+
+# Add to rowData for later use
+rowData(dds)$symbol <- res$symbol
+
+message("DESeq2 complete: ", sum(res$padj < 0.05, na.rm = TRUE), 
+        " significant genes (padj < 0.05)")
+
+# Summary statistics
+summary(res)
+
+# Save results to CSV
+results_file <- file.path(OUTPUT_DIR, "deseq2_results_all.csv")
+write.csv(as.data.frame(res), file = results_file)
+message("Results saved to:", results_file)
+```
+
+
+## 5. Volcano Plot
+
+```{r volcano, fig.width = 11, fig.height = 8}
+# Function to create EnhancedVolcano plot
+make_volcano <- function(res, label_genes = NULL, 
+                         padj_cutoff = 0.05, lfc_cutoff = 1,
+                         output_path = NULL) {
   res_df <- as.data.frame(res)
-  res_df$gene <- rownames(res_df)
-  res_df <-  res_df %>% filter(!is.na(symbol))
-  
-  # Genes to label
-  label_genes <- c("Csta3","Trem2", "Gpnmb", "Cstb", "Spp1", "Lgals3", "Apoe")
+  res_df <- res_df %>% filter(!is.na(symbol))
 
-  p<-EnhancedVolcano(
+  p <- EnhancedVolcano(
     res_df,
     lab = res_df$symbol,
     x = "log2FoldChange",
     y = "padj",
-    ylim = c(0,-log10(10e-5)),
-    xlim = c(-12,12),
-    selectLab = label_genes,     # only label these genes【2】
+    ylim = c(0, -log10(10e-5)),
+    xlim = c(-12, 12),
+    selectLab = label_genes,
     labCol = "black",            # label color
-    pCutoff = 0.05,
-    FCcutoff = 1,
-    pointSize= 0.5,
-    labSize=6.0,
-    colConnectors = "black",
-    gridlines.major = FALSE,   # 【1】
+    pCutoff = padj_cutoff,
+    FCcutoff = lfc_cutoff,
+    pointSize = 0.5,
+    labSize = 6.0,
+    colConnectors = "grey30",
+    gridlines.major = FALSE,
     gridlines.minor = FALSE,
-    col=c('gray', 'gray', 'gray', 'red3'),
-    colAlpha = 1, 
+    col = c("gray", "gray", "gray", "red3"),
+    colAlpha = 0.8,
     drawConnectors = TRUE,
-    widthConnectors = 0.75
-  ) #+ scale_y_continuous(breaks = seq(0, 10, 2))
+    widthConnectors = 0.5,
+    titleLabSize = 14,
+    axisLabSize = 12
+  )
 
-  
-  if (!missing(output_path)){
-    ggsave(output_path, p, width = 10, height = 15, dpi = 300)}
-  return(p)
-  
+  if (!is.null(output_path)) {
+    message("Saving volcano plot to:", output_path)
+    ggplot2::ggsave(output_path, p, width = 10, height = 15, dpi = 300)
+  }
+  p
 }
 
-make_enhanced_volcano(res,
-                  output_path="/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/251204_phag_v_no_phag_volcano.png")
-#
+# Create volcano plot
+p_volcano <- make_volcano(
+  res,
+  label_genes = LABEL_GENES,
+  padj_cutoff = VOLCANO_PADJ,
+  lfc_cutoff = VOLCANO_LFC,
+  output_path = file.path(OUTPUT_DIR, "volcano_plot.png")
+)
+p_volcano
 ```
 
+## 6. Heatmap: Selected Gene Pathway
 
-```{r, fig.width=3, fig.height=6}
-library(pheatmap)
-
-# gene list
-genes <- c("Csta3","Trem2","Gpnmb","Cstb","Spp1","Lgals3","Apoe","Lgals1",
-           "C1qb","C1qc","Ctsd","Ctsa","Hexa","Ifi27","Ifi35","Siglecg",
-           "CD74","H2-Aa")
-
-# obtain normalized counts from the DESeq2 object
-norm_counts <- counts(dds, normalized = TRUE)
-rownames(norm_counts) <- mapIds(
-    org.Mm.eg.db,
+```{r heatmap_pathway, fig.width = 10, fig.height = 8}
+# Heatmap of user-selected pathway genes
+make_pathway_heatmap <- function(dds, genes_of_interest, output_path = NULL) {
+  # Normalize counts
+  norm_counts <- counts(dds, normalized = TRUE)
+  rownames(norm_counts) <- AnnotationDbi::mapIds(
+    ORGANISM,
     keys = rownames(norm_counts),
     column = "SYMBOL",
     keytype = "ENSEMBL",
     multiVals = "first"
+  )
+
+  # Subset for selected genes (keep only those that exist)
+  genes_present <- genes_of_interest[genes_of_interest %in% rownames(norm_counts)]
+  missing <- genes_of_interest[!genes_of_interest %in% rownames(norm_counts)]
+
+  if (length(missing) > 0) {
+    message("Warning: genes not found:", paste(missing, collapse = ", "))
+  }
+
+  mat <- norm_counts[genes_present, ]
+  # Log-transform and scale
+  mat_log <- log2(mat + 1)
+  mat_scaled <- t(scale(t(mat_log)))
+
+  # Color palette
+  colors <- colorRampPalette(c("navy", "white", "firebrick3"))(100)
+
+  # Heatmap
+  p <- pheatmap(
+    mat_scaled,
+    color = colors,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    fontsize = 11,
+    border_color = NA,
+    main = "Selected Genes (Z-score normalized)",
+    cellwidth = 25,
+    cellheight = 15
+  )
+
+  if (!is.null(output_path)) {
+    message("Saving pathway heatmap to:", output_path)
+    pdf(output_path, width = 10, height = 8)
+    print(p)
+    dev.off()
+  }
+
+  p
+}
+
+# Create pathway heatmap
+p_pathway <- make_pathway_heatmap(
+  dds,
+  genes_of_interest = HEATMAP_PATH_GENES,
+  output_path = file.path(OUTPUT_DIR, "heatmap_pathway.pdf")
 )
-
-# subset for selected genes (keep only genes that exist)
-genes_present <- genes[genes %in% rownames(norm_counts)]
-mat <- norm_counts[genes_present, ]
-# log-transform for visualization
-mat_log <- log2(mat + 1)
-
-# scale by row so each gene shows relative expression
-mat_scaled <- t(scale(t(mat_log)))
-# color palette (blue → white → red)
-colors <- colorRampPalette(c("navy", "white", "firebrick3"))(100)
-
-pdf("/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/251209_phag_wt_heatmap.pdf", width = 10, height = 8)
-
-# plot heatmap
-pheatmap(
-  mat_scaled,
-  color = colors,
-  cluster_rows = TRUE,
-  cluster_cols = TRUE,
-  show_rownames = TRUE,
-  show_colnames = TRUE,
-  fontsize = 12,
-  fontsize_row = 12,
-  fontsize_col = 12,
-  border_color = NA,
-  main = "Selected Gene Expression (Z‑score)",
-  cellwidth = 20,
-  cellheight = 15
-)
-dev.off()
 ```
+## 7. Heatmap: Top Differentially Expressed Genes
 
-```{r fig.width=4, fig.height=18}
-top_genes_heatmap <- function(res, dds, n=25){
+```{r heatmap_top, fig.width = 10, fig.height = 12}
+# Heatmap of top N up- and down-regulated genes
+make_top_genes_heatmap <- function(res, dds, n = 25,
+                                   filter_genes = HEATMAP_PATH_GENES,
+                                   output_path = NULL) {
+  # Filter results
+  res_filt <- as.data.frame(res)
+  res_filt <- res_filt[!is.na(res_filt$log2FoldChange), ]
 
-  # 1. Select top n up and n down
-  res_ordered <- res[order(res$log2FoldChange, decreasing = TRUE), ]
-  #res_ordered <- res[order(res$padj, decreasing = FALSE), ] #alternatively sort on padj
+  if (FILTER_NA_SYMBOL) {
+    res_filt <- res_filt[!is.na(res_filt$symbol), ]
+  }
+
+  if (FILTER_PATTERN != "") {
+    res_filt <- res_filt[!grepl(FILTER_PATTERN, res_filt$symbol,
+                                ignore.case = TRUE), ]
+  }
+
+  # Select top n up and n down
+  res_ordered <- res_filt[order(res_filt$log2FoldChange, decreasing = TRUE), ]
   top_up <- head(res_ordered, n)
   top_down <- tail(res_ordered, n)
-  top_genes <- c(rownames(top_up), rownames(top_down))
-  #top_genes <- rownames(head(res_ordered,n*2)) #alternatively take the top genes regardless of up or down
+  top_genes <- unique(c(rownames(top_up), rownames(top_down)))
 
-  # 2. VST transform
-  vst_mat <- assay(vst(dds))[top_genes, ]
-  rownames(vst_mat) <- mapIds(
-      org.Mm.eg.db,
-      keys = rownames(vst_mat),
-      column = "SYMBOL",
-      keytype = "ENSEMBL",
-      multiVals = "first"
-  )
-  # 3. Build row labels (label only selected genes)
-  row_labels <- ifelse(rownames(vst_mat) %in% genes,
-                       rownames(vst_mat),
-                       "")
-  
+  # Get normalized counts and log-transform
   dds_sub <- assay(dds[top_genes, ])
-
   rownames(dds_sub) <- mapIds(
-      org.Mm.eg.db,
-      keys = rownames(dds_sub),
-      column = "SYMBOL",
-      keytype = "ENSEMBL",
-      multiVals = "first"
+    ORGANISM,
+    keys = rownames(dds_sub),
+    column = "SYMBOL",
+    keytype = "ENSEMBL",
+    multiVals = "first"
   )
+
   dds_sub <- log2(dds_sub + 1)
-  
+
   # scale by row so each gene shows relative expression
   dds_sub <- t(scale(t(dds_sub)))
-  
-  # 4. pheatmap
-  p<-pheatmap(
+
+  # Heatmap
+  p <- pheatmap(
     dds_sub,
     cluster_rows = FALSE,
     cluster_cols = TRUE,
@@ -266,49 +365,47 @@ top_genes_heatmap <- function(res, dds, n=25){
     ##cellwidth = 15,
     #cellheight = 10
   )
-  return(p)
+  p
 }
 
-# dds: your DESeqDataSet
-# res: DESeq2 results
-# genes: vector of genes you want labeled
-# 0. Remove entries with NA log2FoldChange, no gene symbol or gene symbols that begin with Gm 
-res_filt <- res[!(is.na(res$log2FoldChange)), ]
-p <- top_genes_heatmap(res_filt,dds,25)
-res_filt <- res[!(is.na(res$log2FoldChange))&!(is.na(res$symbol)), ]
-p <- top_genes_heatmap(res_filt,dds,25)
-res_filt <- res[!(is.na(res$log2FoldChange))&!(is.na(res$symbol))&!grepl("^Gm", res$symbol), ]
-p <- top_genes_heatmap(res_filt,dds,25)
-
-```
-```{r}
-symbols <- mapIds(
-  org.Mm.eg.db,
-  keys = rownames(dds),
-  keytype = "ENSEMBL",
-  column = "SYMBOL",
-  multiVals = "first"
+# Create top genes heatmap
+p_top <- make_top_genes_heatmap(
+  res,
+  dds,
+  n = TOP_GENES_N,
+  output_path = file.path(OUTPUT_DIR, "heatmap_top_genes.pdf")
 )
+```
+## 8. PCA Plot
 
-rowData(dds)$symbol <- symbols
+```{r pca, fig.width = 8, fig.height = 6}
+# PCA visualization
+plot_pca <- function(dds, filter_genes = TRUE) {
+  # Optionally filter out NA symbols and pattern genes
+  if (filter_genes) {
+    idx <- !is.na(rowData(dds)$symbol)
 
-plot_pca <- function(dds){
-  # dds: your DESeqDataSet
-  # "condition" is an example column in colData(dds); replace with yours
-  
-  # 1. VST transform
-  vsd <- vst(dds)
-  
-  # 2. Extract PCA data (built-in helper)
+    if (FILTER_PATTERN != "") {
+      idx <- idx & !grepl(FILTER_PATTERN, rowData(dds)$symbol, ignore.case = TRUE)
+    }
+
+    dds_filt <- dds[idx, ]
+    message("PCA with", nrow(dds_filt), "genes (after filtering)")
+  } else {
+    dds_filt <- dds
+  }
+
+  # VST transform
+  vsd <- vst(dds_filt)
+
+  # Extract PCA data
   pca_data <- plotPCA(vsd, intgroup = "condition", returnData = TRUE)
-  
-  # Percent variance
   percent_var <- round(100 * attr(pca_data, "percentVar"))
-  
-  # 3. Pretty PCA with point labels
-  ggplot(pca_data, aes(PC1, PC2, color = condition, label = name)) +
+
+  # Plot with ggplot
+  p <- ggplot(pca_data, aes(PC1, PC2, color = condition, label = name)) +
     geom_point(size = 4, alpha = 0.8) +
-    geom_text_repel(size = 3.5, max.overlaps = Inf) +
+    ggrepel::geom_text_repel(size = 3.5, max.overlaps = Inf) +
     #geom_text(vjust = -0.7, size = 3.5) +
     expand_limits(
       x = c(min(pca_data$PC1) - 5, max(pca_data$PC1) + 5),
@@ -321,137 +418,13 @@ plot_pca <- function(dds){
     ) +
     xlab(paste0("PC1: ", percent_var[1], "% variance")) +
     ylab(paste0("PC2: ", percent_var[2], "% variance"))
+  p
 }
-plot_pca(dds)
-dds_filt <- dds[!is.na(rowData(dds)$symbol) &!grepl("^Gm", rowData(dds)$symbol),
-]
-plot_pca(dds_filt)
-```
 
+# Plot PCA (with filtering)
+p_pca_filt <- plot_pca(dds, filter_genes = TRUE)
+p_pca_filt
 
-```{r}
-?renv::paths
-renv::snapshot()
-```
-
-
-#####EXTRA#######
-
-Volcano plot
-```{r}
-# Load packages
-library(ggplot2)
-
-make_volcano_plot <- function(){
-  
-}
-# Assume 'res' is your DESeq2 results object:
-# res <- results(dds)
-
-# Convert to data frame
-res_df <- as.data.frame(res)
-
-# Add a column to indicate significance
-res_df$significant <- with(
-  res_df,
-  ifelse(padj < 0.05 & abs(log2FoldChange) > 1, "Significant", "Not Significant")
-)
-
-
-# Genes to label
-label_genes <- c("Trem2", "Gpmnb", "Cstb", "Spp1", "Lgals3", "Apoe")
-
-# Add label column
-res_df$label <- ifelse(res_df$symbol %in% label_genes, res_df$symbol, NA)
-
-# Volcano plot
-ggplot(res_df, aes(x = log2FoldChange,
-                   y = -log10(padj),
-                   color = significant)) +
-  geom_point(alpha = 0.6, size = 1.5) +
-  geom_text(
-    aes(label = label),
-    color = "black",  
-    check_overlap = TRUE,
-    vjust = -0.5,
-    size = 3
-  ) +
-  scale_color_manual(values = c("gray", "red")) +
-  theme_minimal() +
-  theme(
-    panel.grid = element_blank()  # Removes all gridlines
-  ) +
-  labs(
-    title = "Volcano Plot",
-    x = "log2 Fold Change",
-    y = "-log10 Adjusted p-value"
-  )
-
-```
-
-Variance stablization (good fpr PCA/cluster/QC/distance matrices/ML that assumes homoskedastic data, not differential expression testing)
-```{r}
-# Optional: variance stabilized data
-vsd <- vst(dds)
-test2=assay(vsd)
-write.csv(assay(vsd), file = "normalized_vst_counts.csv")
-```
-
-
-
-```{r}
-ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
-abundance <- read_tsv("/output/kallisto_results/mouse_ensbl/B6Cont1NonPhag/abundance.tsv")
-
-tx_ids = str_remove(abundance$target_id, "\\.\\d+$")
-
-mapping <- getBM(
-    attributes = c("ensembl_transcript_id", "ensembl_gene_id", "external_gene_name"),
-    filters = "ensembl_transcript_id",
-    values = tx_ids,
-    mart = ensembl
-)
-
-mapping
-abundance$gene_name = mapping
-abundance$target_id_trimmed = tx_ids
-```
-
-```{r}
-
-
-# ---- 1. Read Kallisto abundance file ----
-abundance <- read_tsv("/output/kallisto_results/mouse_ensbl/B6Cont1NonPhag/abundance.tsv")
-
-# ---- 2. Read Ensembl GTF annotation ----
-gtf <- read_tsv("/data/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf",
-                comment = "#",
-                col_names = FALSE)
-
-# GTF columns (Ensembl standard):
-# 1 seqname, 2 source, 3 feature, 4 start, 5 end, 6 score,
-# 7 strand, 8 frame, 9 attribute
-
-# ---- 3. Extract transcript IDs for rRNA ----
-# Filter rows with rRNA biotype
-rRNA_gtf <- gtf %>%
-  filter(str_detect(X9, 'gene_biotype "rRNA"') | 
-         str_detect(X9, 'transcript_biotype "rRNA"'))
-
-# Extract transcript_id values
-rRNA_ids <- str_match(rRNA_gtf$X9, 'transcript_id "([^"]+)"')[,2] 
-
-# ---- 4. Filter Kallisto output for rRNA transcripts ----
-rRNA_abundance <- abundance %>%
-  filter(target_id_trimmed %in% rRNA_ids)
-
-# ---- 5. Calculate total rRNA reads and total reads ----
-total_rRNA_reads <- sum(rRNA_abundance$est_counts)
-total_reads <- sum(abundance$est_counts)
-
-# ---- 6. Calculate percentage ----
-percent_rRNA <- (total_rRNA_reads / total_reads) * 100
-
-# ---- 7. Output result ----
-cat("Percent ribosomal reads:", round(percent_rRNA, 2), "%\n")
+# Also save
+ggsave(file.path(OUTPUT_DIR, "pca_plot.pdf"), p_pca_filt, width = 8, height = 6)
 ```

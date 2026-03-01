@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     libssl-dev \
     libxml2-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libcairo2-dev \
+    pkg-config
     wget \
     unzip \
     git \
