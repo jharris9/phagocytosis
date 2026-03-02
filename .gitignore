@@ -1,6 +1,30 @@
-.Rproj.user
+# === Data (too large for git) ===
+data/
+results/
+*.fastq.gz
+*.h5
+*.bam
+*.idx
+
+# === Large R objects ===
+*.rds
+scripts/.Rproj.user/
+scripts/renv/
+
+# === renv (only track lock + activate) ===
+renv/library/
+renv/staging/
+renv/cellar/
+renv/sandbox/
+renv/python/
+
+# === R session ===
 .Rhistory
-.Rproj.user/
 .RData
+.Rproj.user/
+.Rproj.user
 .Ruserdata
-Rplots.pdf
+
+# === OS ===
+.DS_Store
+Thumbs.db

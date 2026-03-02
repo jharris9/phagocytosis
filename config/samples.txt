@@ -1,0 +1,8 @@
+sample,path,condition,replicate
+B6Cont1NonPhag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont1NonPhag/abundance.tsv,NonPhag,1
+B6Cont1Phag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont1Phag/abundance.tsv,Phag,1
+B6Cont2NonPhag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont2NonPhag/abundance.tsv,NonPhag,2
+B6Cont2Phag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont2Phag/abundance.tsv,Phag,2
+B6Cont4NonPhag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont4NonPhag/abundance.tsv,NonPhag,4
+B6Cont4Phag,/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/B6Cont4Phag/abundance.tsv,Phag,4
+
