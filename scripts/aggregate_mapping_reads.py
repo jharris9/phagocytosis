@@ -17,8 +17,6 @@ for reference in sorted(os.listdir(root_dir)):
 
     # Iterate through second-level directories (samples)
     for sample in sorted(os.listdir(ref_path)):
-        if sample == "figures":
-            continue
         sample_path = os.path.join(ref_path, sample)
         run_info_path = os.path.join(sample_path, "run_info.json")
 

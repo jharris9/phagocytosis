@@ -65,7 +65,7 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 SAMPLE_PATH <- "config/samples.csv"  # CSV with columns: sample, path, condition, replicate
 GTF_PATH <- "data/reference/mouse/ensembl/Mus_musculus.GRCm39.115.gtf"
 TX2GENE_PATH <- "data/reference/mouse/ensembl/tx2gene.tsv"
-OUTPUT_DIR <- "results/02_kallisto/mouse_ensbl/figures"
+OUTPUT_DIR <- "results/03_deseq2/mouse_ensbl/"
 
 # Annotation
 ORGANISM <- org.Mm.eg.db
@@ -335,7 +335,6 @@ p_pathway <- make_pathway_heatmap(
 ```{r heatmap_top, fig.width = 10, fig.height = 12}
 # Heatmap of top N up- and down-regulated genes
 make_top_genes_heatmap <- function(res, dds, n = 25,
-                                   filter_genes = HEATMAP_PATH_GENES,
                                    output_path = NULL) {
   # Filter results
   res_filt <- as.data.frame(res)
@@ -384,6 +383,14 @@ make_top_genes_heatmap <- function(res, dds, n = 25,
     ##cellwidth = 15,
     #cellheight = 10
   )
+  
+  if (!is.null(output_path)) {
+    message("Saving top genes heatmap to:", output_path)
+    pdf(output_path, width = 10, height = 8)
+    print(p)
+    dev.off()
+  }
+
   p
 }
 
