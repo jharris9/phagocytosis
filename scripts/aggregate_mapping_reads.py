@@ -3,19 +3,22 @@ import json
 import pandas as pd
 
 # Change this to the root directory containing the reference directories
-root_dir = "/projects/margeta/phagocytosis/kallisto_results"
+root_dir = "results/02_kallisto/"  # Update this path as needed
 
 # Dictionary to store data: {sample: {reference: p_pseudoaligned}}
 data = {}
 
 # Iterate through first-level directories (references)
 for reference in sorted(os.listdir(root_dir)):
+    # skip non-directories and the figures folder
     ref_path = os.path.join(root_dir, reference)
     if not os.path.isdir(ref_path):
         continue
 
     # Iterate through second-level directories (samples)
     for sample in sorted(os.listdir(ref_path)):
+        if sample == "figures":
+            continue
         sample_path = os.path.join(ref_path, sample)
         run_info_path = os.path.join(sample_path, "run_info.json")
 

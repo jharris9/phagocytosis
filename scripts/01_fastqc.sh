@@ -32,10 +32,9 @@ EOF
 
 # Paths
 PROJECT_ID="30-1191629345"
-BASE_DIR="/data_pool/raw_data/bulk_rnaseq/${PROJECT_ID}"
-FASTQ_DIR="${BASE_DIR}/00_fastq"
+FASTQ_DIR="data/raw"
 TRIMMED_DIR="${FASTQ_DIR}/trimmed"
-FASTQC_DIR="/projects/margeta/phagocytosis/fastqc"
+FASTQC_DIR="results/01_fastqc"
 
 # Threads
 THREADS=28

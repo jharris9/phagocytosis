@@ -30,19 +30,17 @@ EOF
 # =============================================================================
 
 # Paths
-PROJECT_ID="30-1191629345"
-BASE_DIR="/data_pool/raw_data/bulk_rnaseq/${PROJECT_ID}"
-FASTQ_DIR="${BASE_DIR}/00_fastq"
+FASTQ_DIR="data/raw/"
 TRIMMED_DIR="${FASTQ_DIR}/trimmed"
 
 # Kallisto index
 # https://github.com/pachterlab/kallisto-transcriptome-indices?tab=readme-ov-file
 # INDEX="/data/kallisto/mouse/ens108/index.idx"
 # INDEX="/data_pool/raw_data/reference_genomes/mouse/mouse_gencode.idx"
-INDEX="/data_pool/raw_data/reference_genomes/mouse/ensembl/kallisto_index/mouse_transcripts.idx"
+INDEX="data/reference/mouse/ensembl/kallisto_index/mouse_transcripts.idx"
 
 # Output base directory
-OUT_BASE="/projects/margeta/phagocytosis/kallisto_results"
+OUT_BASE="results/02_kallisto"
 
 # Threads
 THREADS=28

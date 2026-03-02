@@ -17,8 +17,6 @@ A universal, modular pipeline for DESeq2 analysis with volcano plots, heatmaps, 
 ## 1. Setup & Configuration
 
 ```{r setup, message=FALSE, warning=FALSE}
-
-
 # Activate renv for this project (creates renv structure if needed)
 # Renv will manage package versions and dependencies for reproducibility
 library(renv)
@@ -31,7 +29,7 @@ if (file.exists("renv.lock")) {
 packages <- c(
   # CRAN
   "dplyr", "stringr", "readr", "ggplot2", "ggrepel",
-  "pheatmap", "systemfonts", "AsioHeaders", "httpgd",
+  "pheatmap", "systemfonts", "AsioHeaders",
   # Bioconductor
   "rhdf5", "DESeq2", "tximport", "AnnotationDbi",
   "org.Mm.eg.db", "GenomicFeatures", "EnhancedVolcano"
@@ -64,10 +62,10 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```{r config}
 # ===== EDIT THESE PARAMETERS =====
 # Paths
-SAMPLE_PATH <- "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/samples.txt"
-GTF_PATH <- "/data_pool/raw_data/reference_genomes/mouse/ensembl/Mus_musculus.GRCm39.115.gtf"
-TX2GENE_PATH <- "/data_pool/raw_data/reference_genomes/mouse/ensembl/tx2gene.tsv"
-OUTPUT_DIR <- "/projects/margeta/phagocytosis/kallisto_results/mouse_ensbl/results"
+SAMPLE_PATH <- "config/samples.csv"  # CSV with columns: sample, path, condition, replicate
+GTF_PATH <- "data/reference/mouse/ensembl/Mus_musculus.GRCm39.115.gtf"
+TX2GENE_PATH <- "data/reference/mouse/ensembl/tx2gene.tsv"
+OUTPUT_DIR <- "results/02_kallisto/mouse_ensbl/figures"
 
 # Annotation
 ORGANISM <- org.Mm.eg.db
