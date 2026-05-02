@@ -49,5 +49,6 @@
   "workspaceFolder": "/projects/phagocytosis",
   "workspaceMount": "source=${localWorkspaceFolder},target=/projects/phagocytosis,type=bind,consistency=cached",
   "postCreateCommand": "mkdir -p /home/rstudio/R/x86_64-pc-linux-gnu-library/4.5 && Rscript --no-init-file -e 'lib <- \"/home/rstudio/R/x86_64-pc-linux-gnu-library/4.5\"; if (!requireNamespace(\"renv\", quietly=TRUE)) install.packages(\"renv\", repos=c(CRAN=\"https://cloud.r-project.org\"), lib=lib); renv::restore(prompt=FALSE)'",
+  "postStartCommand": "sudo chown -R rstudio:rstudio /projects/phagocytosis/.git",
   "remoteUser": "rstudio"
 }

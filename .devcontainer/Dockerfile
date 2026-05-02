@@ -45,11 +45,16 @@ RUN mkdir -p /home/rstudio/.cache \
     && chown -R rstudio:rstudio /home/rstudio \
     && chmod -R 777 /home/rstudio/.cache /home/rstudio/.vscode-server
 
+# Passwordless sudo for rstudio (standard devcontainer pattern)
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && echo "rstudio ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV HOME=/home/rstudio
 ENV RENV_PATHS_LIBRARY=/home/rstudio/R/x86_64-pc-linux-gnu-library/4.5
 
 RUN R -e "install.packages('https://cran.r-project.org/src/contrib/Archive/renv/renv_1.2.2.tar.gz', repos=NULL, type='source', lib=.Library)" \
-    && R -e "install.packages('languageserver', repos='https://p3m.dev/cran/__linux__/noble/latest', lib=.Library)" \
+    && R -e "install.packages('languageserver', repos='https://cloud.r-project.org', lib=.Library)" \
     && chmod -R 777 /home/rstudio/.vscode-server
 
 WORKDIR /projects/phagocytosis
