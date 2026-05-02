@@ -26,20 +26,21 @@ renv::activate()
 if (file.exists("renv.lock")) {
   renv::restore(prompt = FALSE)
 }
-packages <- c(
-  # CRAN
+cran_packages <- c(
   "dplyr", "stringr", "readr", "ggplot2", "ggrepel",
-  "pheatmap", "systemfonts", "AsioHeaders",
-  # Bioconductor
-  "rhdf5", "DESeq2", "tximport", "AnnotationDbi",
-  "org.Mm.eg.db", "GenomicFeatures", "EnhancedVolcano"
+  "pheatmap", "systemfonts", "AsioHeaders"
 )
+bioc_packages <- c(
+  "rhdf5", "DESeq2", "tximport", "AnnotationDbi",
+  "org.Mm.eg.db", "GenomicFeatures", "txdbmaker", "EnhancedVolcano"
+)
+packages <- c(cran_packages, bioc_packages)
 
-#Install any missing packages
-installed <- packages %in% rownames(installed.packages())
-if (any(!installed)) {
-  renv::install(packages[!installed], prompt = FALSE)
-}
+# Install any missing packages (bioc:: prefix required for Bioconductor packages)
+missing_cran <- cran_packages[!cran_packages %in% rownames(installed.packages())]
+missing_bioc <- bioc_packages[!bioc_packages %in% rownames(installed.packages())]
+if (length(missing_cran) > 0) renv::install(missing_cran, prompt = FALSE)
+if (length(missing_bioc) > 0) renv::install(paste0("bioc::", missing_bioc), prompt = FALSE)
 
 #Install httpgd for remote figure generation for VSCode if using
 if (!"httpgd" %in% rownames(installed.packages())) {

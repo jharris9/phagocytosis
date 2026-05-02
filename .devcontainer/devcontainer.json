@@ -1,0 +1,53 @@
+{
+  "name": "kallisto-deseq2",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "runArgs": [
+    "--name",
+    "kallisto-deseq2",
+    "--restart",
+    "unless-stopped",
+    "-p",
+    "8795:8787",
+    "-e",
+    "PASSWORD=Di149ver1",
+    "-v",
+    "/data_pool/raw_data/margeta/bulk_rnaseq/30-1191629345/00_fastq:/projects/phagocytosis/data/raw:ro",
+    "-v",
+    "/data_pool/raw_data/reference_genomes:/projects/phagocytosis/data/reference:ro",
+    "-v",
+    "/data_pool/R_cache/R:/home/rstudio/.cache/R",
+    "-v",
+    "/data_pool/vscode_extensions:/home/rstudio/.vscode-server/extensions",
+    "-v",
+    "/data_pool/claude_config:/home/rstudio/.claude"
+  ],
+  "containerEnv": {
+    "RENV_PATHS_CACHE": "/home/rstudio/.cache/R/renv/cache",
+    "RENV_PATHS_LIBRARY": "/home/rstudio/R/x86_64-pc-linux-gnu-library/4.5",
+    "RENV_PATHS_SOURCE": "/home/rstudio/.cache/R/renv/source",
+    "RENV_CONFIG_REPOS_OVERRIDE": "CRAN=https://cloud.r-project.org"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "REditorSupport.r",
+        "ms-azuretools.vscode-docker",
+        "mechatroner.rainbow-csv",
+        "REditorSupport.r-syntax",
+        "vscodevim.vim",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+      
+    }
+  },
+  "workspaceFolder": "/projects/phagocytosis",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/projects/phagocytosis,type=bind,consistency=cached",
+  "postCreateCommand": "mkdir -p /home/rstudio/R/x86_64-pc-linux-gnu-library/4.5 && Rscript --no-init-file -e 'lib <- \"/home/rstudio/R/x86_64-pc-linux-gnu-library/4.5\"; if (!requireNamespace(\"renv\", quietly=TRUE)) install.packages(\"renv\", repos=c(CRAN=\"https://cloud.r-project.org\"), lib=lib); renv::restore(prompt=FALSE)'",
+  "remoteUser": "rstudio"
+}

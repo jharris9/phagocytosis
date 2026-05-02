@@ -33,18 +33,15 @@ bash scripts/02_kallisto.sh \
   -o results/02_kallisto \
   -j 6
 
-
 python3 scripts/aggregate_mapping_reads.py 
 
-
-echo "========================================="
-echo " Step 5: DESeq2 Analysis"
-echo "========================================="
+mkdir -p logs
 
 Rscript -e "rmarkdown::render(
-    'scripts/05_deseq2.Rmd',
+    'scripts/03_deseq2.Rmd',
     output_dir = 'reports/',
-    output_file = 'deseq2_report.html'
+    output_file = 'deseq2_report.html',
+    knit_root_dir = getwd()
 )" 2>&1 | tee logs/deseq2_$(date +%Y-%m-%d).log
 
 echo "✅ DESeq2 report saved to reports/deseq2_report.html"
